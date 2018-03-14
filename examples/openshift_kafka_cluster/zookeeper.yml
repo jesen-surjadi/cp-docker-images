@@ -1,0 +1,144 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: zookeeper
+metadata:
+  annotations:
+    description: Zookeeper Deployment and Runtime Components
+    iconClass: icon-java
+    tags: java,zookeeper
+  name: zookeeper
+objects:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}-headless
+  spec:
+    clusterIP: None
+    portalIP: None
+    ports:
+    - name: server
+      port: 2888
+      protocol: TCP
+      targetPort: 2888
+    - name: leader-election
+      port: 3888
+      protocol: TCP
+      targetPort: 3888
+    selector:
+      application: ${APPLICATION_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    ports:
+    - name: client
+      port: 2181
+      protocol: TCP
+      targetPort: 2181
+    selector:
+      application: ${APPLICATION_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    replicas: ${NODES}
+    selector:
+      matchLabels:
+        application: ${APPLICATION_NAME}
+    serviceName: ${APPLICATION_NAME}-headless
+    template:
+      metadata:
+        creationTimestamp: null
+        labels:
+          application: ${APPLICATION_NAME}
+      spec:
+        containers:
+        - name: ${APPLICATION_NAME}
+          image: ${APPLICATION_IMAGE}
+          imagePullPolicy: Always
+          command:
+          - sh
+          - -c
+          - for ((i=0; i<$ZOOKEEPER_NODES; i++)); do SRV="$(echo $ZOOKEEPER_SERVER_ID | sed "s/[0-9*]$/$i/")"; ZOOKEEPER_SERVERS="$SRV:$ZOOKEEPER_SERVER_PORT:$ZOOKEEPER_ELECTION_PORT;$ZOOKEEPER_SERVERS"; export ZOOKEEPER_SERVERS=$(echo $ZOOKEEPER_SERVERS | sed "s/[;]$//"); done && /etc/confluent/docker/run
+          env:
+          - name: ZOOKEEPER_SERVER_ID
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name
+          - name: ZOOKEEPER_CLIENT_PORT
+            value: "2181"
+          - name: ZOOKEEPER_TICK_TIME
+            value: "2000"
+          - name: ZOOKEEPER_INIT_LIMIT
+            value: "5"
+          - name: ZOOKEEPER_SYNC_LIMIT
+            value: "2"
+          - name: ZOOKEEPER_SERVER_PORT
+            value: "2888"
+          - name: ZOOKEEPER_ELECTION_PORT
+            value: "3888"
+          - name: ZOOKEEPER_NODES
+            value: ${NODES}
+          ports:
+          - containerPort: 2181
+            name: client
+            protocol: TCP
+          - containerPort: 2888
+            name: server
+            protocol: TCP
+          - containerPort: 3888
+            name: leader-election
+            protocol: TCP
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /var/lib/zookeeper
+            name: datadir
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        terminationGracePeriodSeconds: 30
+    volumeClaimTemplates:
+    - metadata:
+        labels:
+          application: ${APPLICATION_NAME}
+        name: datadir
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: ${STORAGE_SIZE}
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+  value: confluent-zookeeper
+- description: Zookeeper Image
+  name: APPLICATION_IMAGE
+  required: true
+  value: confluentinc/cp-zookeeper:4.0.0
+- description: Node count
+  name: NODES
+  required: true
+  value: "3"
+- description: Storage size
+  name: STORAGE_SIZE
+  required: true
+  value: "1Gi"
