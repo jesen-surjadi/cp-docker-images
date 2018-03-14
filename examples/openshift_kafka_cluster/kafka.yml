@@ -1,0 +1,122 @@
+apiVersion: v1
+kind: Template
+labels:
+  template: kafka
+metadata:
+  annotations:
+    description: Kafka Deployment and Runtime Components
+    iconClass: icon-java
+    tags: java,kafka
+  name: kafka
+objects:
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}-headless
+  spec:
+    clusterIP: None
+    portalIP: None
+    ports:
+    - port: 9092
+      protocol: TCP
+      targetPort: 9092
+    selector:
+      application: ${APPLICATION_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: v1
+  kind: Service
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    ports:
+    - port: 9092
+      protocol: TCP
+      targetPort: 9092
+    selector:
+      application: ${APPLICATION_NAME}
+    sessionAffinity: None
+    type: ClusterIP
+- apiVersion: apps/v1beta1
+  kind: StatefulSet
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  spec:
+    replicas: 3
+    selector:
+      matchLabels:
+        application: ${APPLICATION_NAME}
+    serviceName: ${APPLICATION_NAME}-headless
+    template:
+      metadata:
+        labels:
+          application: ${APPLICATION_NAME}
+      spec:
+        containers:
+        - name: ${APPLICATION_NAME}
+          image: ${APPLICATION_IMAGE}
+          imagePullPolicy: Always
+        - command:
+          - sh
+          - -c
+          - for ((i=0; i<$KAFKA_NODES; i++)); do KAFKA_ZOOKEEPER_CONNECT="$ZOOKEEPER_NAME-$i:$KAFKA_ZOOKEEPER_PORT,$KAFKA_ZOOKEEPER_CONNECT"; export KAFKA_ZOOKEEPER_CONNECT=$(echo $KAFKA_ZOOKEEPER_CONNECT | sed "s/[,]$//"); done && /etc/confluent/docker/run
+          env:
+          - name: KAFKA_ADVERTISED_LISTENERS
+            value: "PLAINTEXT://:9092"
+          - name: KAFKA_ZOOKEEPER_PORT
+            value: "2181"
+          - name: KAFKA_NODES
+            value: ${NODES}
+          ports:
+          - containerPort: 9092
+            protocol: TCP
+          resources:
+            requests:
+              cpu: 256m
+              memory: 256Mi
+          terminationMessagePath: /dev/termination-log
+          volumeMounts:
+          - mountPath: /var/lib/kafka
+            name: datadir
+        dnsPolicy: ClusterFirst
+        restartPolicy: Always
+        securityContext: {}
+        terminationGracePeriodSeconds: 30
+    volumeClaimTemplates:
+    - metadata:
+        labels:
+          application: ${APPLICATION_NAME}
+        name: datadir
+      spec:
+        accessModes:
+        - ReadWriteOnce
+        resources:
+          requests:
+            storage: ${STORAGE_SIZE}
+parameters:
+- description: The name for the application.
+  name: APPLICATION_NAME
+  required: true
+  value: confluent-kafka
+- description: zookeeper name
+  name: ZOOKEEPER_NAME
+  required: true
+  value: confluent-zookeeper
+- description: Kafka Image
+  name: APPLICATION_IMAGE
+  required: true
+  value: confluentinc/cp-kafka:4.0.0
+- description: Node count
+  name: NODES
+  required: true
+  value: "3"
+- description: Storage size
+  name: STORAGE_SIZE
+  required: true
+  value: "1Gi"
