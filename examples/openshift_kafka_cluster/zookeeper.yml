@@ -72,13 +72,18 @@ objects:
           command:
           - sh
           - -c
-          - for ((i=0; i<$ZOOKEEPER_NODES; i++)); do SRV="$(echo $ZOOKEEPER_SERVER_ID | sed "s/[0-9*]$/$i/")"; ZOOKEEPER_SERVERS="$SRV:$ZOOKEEPER_SERVER_PORT:$ZOOKEEPER_ELECTION_PORT;$ZOOKEEPER_SERVERS"; export ZOOKEEPER_SERVERS=$(echo $ZOOKEEPER_SERVERS | sed "s/[;]$//"); done && /etc/confluent/docker/run
+          args:
+          - for ((i=0; i<$ZOOKEEPER_NODES; i++)); do
+              SRV=$(echo $ZOOKEEPER_SERVER_ID | sed "s/[0-9*]$/$i/").$ZOOKEEPER_POD_SERVICE;
+              ZOOKEEPER_SERVERS="$SRV:$ZOOKEEPER_SERVER_PORT:$ZOOKEEPER_ELECTION_PORT;$ZOOKEEPER_SERVERS";
+            done;
+            ID=$(echo $ZOOKEEPER_POD_NAME | tr -d -c 0-9);
+            export ZOOKEEPER_SERVERS=$(echo $ZOOKEEPER_SERVERS | sed "s/[;]$//" | sed "s/$ZOOKEEPER_POD_NAME.$ZOOKEEPER_POD_SERVICE/0.0.0.0/g");
+            export ZOOKEEPER_SERVER_ID=$((ID+1));
+            echo $ZOOKEEPER_SERVERS;
+            echo $ZOOKEEPER_SERVER_ID;
+            /etc/confluent/docker/run;
           env:
-          - name: ZOOKEEPER_SERVER_ID
-            valueFrom:
-              fieldRef:
-                apiVersion: v1
-                fieldPath: metadata.name
           - name: ZOOKEEPER_CLIENT_PORT
             value: "2181"
           - name: ZOOKEEPER_TICK_TIME
@@ -93,6 +98,13 @@ objects:
             value: "3888"
           - name: ZOOKEEPER_NODES
             value: ${NODES}
+          - name: ZOOKEEPER_POD_NAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name
+          - name: ZOOKEEPER_POD_SERVICE
+            value: ${APPLICATION_NAME}-headless
           ports:
           - containerPort: 2181
             name: client
