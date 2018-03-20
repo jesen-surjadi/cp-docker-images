@@ -10,6 +10,29 @@ metadata:
   name: zookeeper
 objects:
 - apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  data:
+    entrypoint.sh: |-
+      #!/bin/bash
+      
+      ID=$(echo $POD_NAME | tr -d -c 0-9);
+      export ZOOKEEPER_SERVER_ID=$((ID++));
+      echo "ZOOKEEPER_SERVER_ID : "$ZOOKEEPER_SERVER_ID;
+      for i in $(eval echo "{$NODES..1}"); do
+        SRVID=((i--))
+        SRV=$(echo $POD_NAME | sed "s/[0-9*]$/$SRVID/").$POD_SERVICE;
+        ZOOKEEPER_SERVERS="$SRV:$ZOOKEEPER_SERVER_PORT:$ZOOKEEPER_ELECTION_PORT;$ZOOKEEPER_SERVERS";
+      done;
+      export ZOOKEEPER_SERVERS=$ZOOKEEPER_SERVERS;
+      echo "ZOOKEEPER_SERVERS: " $ZOOKEEPER_SERVERS;
+      
+      /etc/confluent/docker/run;
+      
+- apiVersion: v1
   kind: Service
   metadata:
     labels:
@@ -27,18 +50,6 @@ objects:
       port: 3888
       protocol: TCP
       targetPort: 3888
-    selector:
-      application: ${APPLICATION_NAME}
-    sessionAffinity: None
-    type: ClusterIP
-- apiVersion: v1
-  kind: Service
-  metadata:
-    labels:
-      application: ${APPLICATION_NAME}
-    name: ${APPLICATION_NAME}
-  spec:
-    ports:
     - name: client
       port: 2181
       protocol: TCP
@@ -70,19 +81,7 @@ objects:
           image: ${APPLICATION_IMAGE}
           imagePullPolicy: Always
           command:
-          - sh
-          - -c
-          args:
-          - for ((i=0; i<$ZOOKEEPER_NODES; i++)); do
-              SRV=$(echo $ZOOKEEPER_SERVER_ID | sed "s/[0-9*]$/$i/").$ZOOKEEPER_POD_SERVICE;
-              ZOOKEEPER_SERVERS="$SRV:$ZOOKEEPER_SERVER_PORT:$ZOOKEEPER_ELECTION_PORT;$ZOOKEEPER_SERVERS";
-            done;
-            ID=$(echo $ZOOKEEPER_POD_NAME | tr -d -c 0-9);
-            export ZOOKEEPER_SERVERS=$(echo $ZOOKEEPER_SERVERS | sed "s/[;]$//" | sed "s/$ZOOKEEPER_POD_NAME.$ZOOKEEPER_POD_SERVICE/0.0.0.0/g");
-            export ZOOKEEPER_SERVER_ID=$((ID+1));
-            echo $ZOOKEEPER_SERVERS;
-            echo $ZOOKEEPER_SERVER_ID;
-            /etc/confluent/docker/run;
+          - /bin/entrypoint.sh
           env:
           - name: ZOOKEEPER_CLIENT_PORT
             value: "2181"
@@ -96,14 +95,14 @@ objects:
             value: "2888"
           - name: ZOOKEEPER_ELECTION_PORT
             value: "3888"
-          - name: ZOOKEEPER_NODES
+          - name: NODES
             value: ${NODES}
-          - name: ZOOKEEPER_POD_NAME
+          - name: POD_NAME
             valueFrom:
               fieldRef:
                 apiVersion: v1
                 fieldPath: metadata.name
-          - name: ZOOKEEPER_POD_SERVICE
+          - name: POD_SERVICE
             value: ${APPLICATION_NAME}-headless
           ports:
           - containerPort: 2181
@@ -117,15 +116,22 @@ objects:
             protocol: TCP
           resources:
             requests:
-              cpu: 100m
               memory: 512Mi
           terminationMessagePath: /dev/termination-log
           volumeMounts:
-          - mountPath: /var/lib/zookeeper
+          - mountPath: /bin/entrypoint.sh
+            name: ${APPLICATION_NAME}-volume
+            readOnly: true
+          - mountPath: ${PERSISTENT_VOLUME_MOUNTPATH}
             name: datadir
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         terminationGracePeriodSeconds: 30
+    volumes:
+    - name: ${APPLICATION_NAME}-volume
+      configMap:
+        defaultMode: 0700
+        name: ${APPLICATION_NAME}
     volumeClaimTemplates:
     - metadata:
         labels:
@@ -154,3 +160,7 @@ parameters:
   name: STORAGE_SIZE
   required: true
   value: "1Gi"
+- description: Storage size
+  name: PERSISTENT_VOLUME_MOUNTPATH
+  required: true
+  value: "/var/lib/zookeeper"

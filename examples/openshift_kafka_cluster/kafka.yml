@@ -10,6 +10,24 @@ metadata:
   name: kafka
 objects:
 - apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    labels:
+      application: ${APPLICATION_NAME}
+    name: ${APPLICATION_NAME}
+  data:
+    entrypoint.sh: |-
+      #!/bin/bash
+      
+      for i in $(eval echo "{0..$((NODES-1))}"); do
+        KAFKA_ZOOKEEPER_CONNECT="$KAFKA_ZOOKEEPER_POD_NAME-$i.$KAFKA_ZOOKEEPER_POD_SERVICE:$KAFKA_ZOOKEEPER_PORT,$KAFKA_ZOOKEEPER_CONNECT";
+      done;
+      export KAFKA_ZOOKEEPER_CONNECT=$(echo $KAFKA_ZOOKEEPER_CONNECT | sed "s/[,]$//");
+      echo "KAFKA_ZOOKEEPER_CONNECT: " $KAFKA_ZOOKEEPER_CONNECT;
+      
+      /etc/confluent/docker/run;
+      
+- apiVersion: v1
   kind: Service
   metadata:
     labels:
@@ -48,7 +66,7 @@ objects:
       application: ${APPLICATION_NAME}
     name: ${APPLICATION_NAME}
   spec:
-    replicas: 3
+    replicas: ${NODES}
     selector:
       matchLabels:
         application: ${APPLICATION_NAME}
@@ -63,31 +81,47 @@ objects:
           image: ${APPLICATION_IMAGE}
           imagePullPolicy: Always
         - command:
-          - sh
-          - -c
-          - for ((i=0; i<$KAFKA_NODES; i++)); do KAFKA_ZOOKEEPER_CONNECT="$ZOOKEEPER_NAME-$i:$KAFKA_ZOOKEEPER_PORT,$KAFKA_ZOOKEEPER_CONNECT"; export KAFKA_ZOOKEEPER_CONNECT=$(echo $KAFKA_ZOOKEEPER_CONNECT | sed "s/[,]$//"); done && /etc/confluent/docker/run
+          - /bin/entrypoint.sh
           env:
           - name: KAFKA_ADVERTISED_LISTENERS
-            value: "PLAINTEXT://:9092"
+            value: "PLAINTEXT://${APPLICATION_NAME}:9092"
           - name: KAFKA_ZOOKEEPER_PORT
             value: "2181"
-          - name: KAFKA_NODES
+          - name: NODES
             value: ${NODES}
+          - name: KAFKA_ZOOKEEPER_POD_NAME
+            value: ${ZOOKEEPER_NAME}
+          - name: KAFKA_ZOOKEEPER_POD_SERVICE
+            value: ${ZOOKEEPER_NAME}-headless
+          - name: POD_NAME
+            valueFrom:
+              fieldRef:
+                apiVersion: v1
+                fieldPath: metadata.name
+          - name: POD_SERVICE
+            value: ${APPLICATION_NAME}-headless
           ports:
           - containerPort: 9092
             protocol: TCP
           resources:
             requests:
-              cpu: 256m
-              memory: 256Mi
+              memory: 512Mi
           terminationMessagePath: /dev/termination-log
           volumeMounts:
-          - mountPath: /var/lib/kafka
+          - mountPath: /bin/entrypoint.sh
+            name: ${APPLICATION_NAME}-volume
+            readOnly: true
+          - mountPath: ${PERSISTENT_VOLUME_MOUNTPATH}
             name: datadir
         dnsPolicy: ClusterFirst
         restartPolicy: Always
         securityContext: {}
         terminationGracePeriodSeconds: 30
+    volumes:
+    - name: ${APPLICATION_NAME}-volume
+      configMap:
+        defaultMode: 0700
+        name: ${APPLICATION_NAME}
     volumeClaimTemplates:
     - metadata:
         labels:
@@ -120,3 +154,6 @@ parameters:
   name: STORAGE_SIZE
   required: true
   value: "1Gi"
+  name: PERSISTENT_VOLUME_MOUNTPATH
+  required: true
+  value: "/var/lib/kafka"
